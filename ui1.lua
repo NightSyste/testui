@@ -64,9 +64,9 @@ local function LoadCfg(Config)
 		return HttpService:JSONDecode(Config)
 	end)
 	if not Success then return end
-	table.foreach(Data, function(a, b)
+	for a, b in pairs(Data) do
 		if Library.Flags[a] then
-			spawn(function()
+			task.spawn(function()
 				if Library.Flags[a].Type == "Colorpicker" then
 					Library.Flags[a]:Set(UnpackColor(b))
 				else
@@ -74,7 +74,7 @@ local function LoadCfg(Config)
 				end
 			end)
 		end
-	end)
+	end
 end
 
 local function SaveCfg(Name)
@@ -182,7 +182,6 @@ local function MakeDraggable(DragPoint, Main)
 	end)
 	return function(resizing)
 		IsResizing = resizing
-		if resizing then Dragging = false end
 	end
 end
 
@@ -232,12 +231,12 @@ local function MakeElement(ElementName, ...)
 end
 
 local function SetProps(Element, Props)
-	table.foreach(Props, function(Property, Value) Element[Property] = Value end)
+	for Property, Value in pairs(Props) do Element[Property] = Value end
 	return Element
 end
 
 local function SetChildren(Element, Children)
-	table.foreach(Children, function(_, Child) Child.Parent = Element end)
+	for _, Child in pairs(Children) do Child.Parent = Element end
 	return Element
 end
 
@@ -267,8 +266,24 @@ local function AddThemeObject(Object, Type)
 	return Object
 end
 
--- Element in ein Panel einfuegen: transparent + 1px Trennlinie unten
-local function StyleElement(Frame, InPanel)
+-- Text eines Elements (fuer die Suche)
+local function GetElementName(Frame)
+	local Result = ""
+	local Title = Frame:FindFirstChild("Title", true)
+	if Title and Title:IsA("TextLabel") then Result = Result .. Title.Text .. " " end
+	local Content = Frame:FindFirstChild("Content", true)
+	if Content and Content:IsA("TextLabel") then Result = Result .. Content.Text end
+	return Result
+end
+
+-- Element fuer die Suche registrieren + ggf. ins Panel einfuegen
+local function SetupElement(Frame, InPanel, Container, Activate, ItemParent)
+	table.insert(Library.SearchRegistry, {
+		Frame = Frame,
+		Container = Container,
+		Activate = Activate,
+		Section = (ItemParent and Container and ItemParent ~= Container) and ItemParent.Parent or nil
+	})
 	if not InPanel then return Frame end
 	Frame.BackgroundTransparency = 1
 	Frame.Position = UDim2.new(0, 0, 0, 0)
@@ -482,9 +497,11 @@ function Library:MakeWindow(WindowConfig)
 	WindowConfig.ShowIcon        = WindowConfig.ShowIcon        or false
 	WindowConfig.Icon            = WindowConfig.Icon            or "rbxassetid://8834748103"
 	WindowConfig.IntroIcon       = WindowConfig.IntroIcon       or "rbxassetid://8834748103"
-	if WindowConfig.Tag == nil then WindowConfig.Tag = "General" end
-	WindowConfig.TagCallback     = WindowConfig.TagCallback     or function() end
 	WindowConfig.SearchCallback  = WindowConfig.SearchCallback  or function() end
+	WindowConfig.ToggleKey       = WindowConfig.ToggleKey       or Enum.KeyCode.RightShift
+
+	Library.SearchRegistry = {}
+	local ToggleKeyName = (typeof(WindowConfig.ToggleKey) == "EnumItem" and WindowConfig.ToggleKey.Name or tostring(WindowConfig.ToggleKey)):gsub("(%l)(%u)", "%1 %2")
 
 	Library.Folder  = WindowConfig.ConfigFolder
 	Library.SaveCfg = WindowConfig.SaveConfig
@@ -634,21 +651,30 @@ function Library:MakeWindow(WindowConfig)
 		TextYAlignment = Enum.TextYAlignment.Center
 	}), "Text")
 
-	local TagButton = SetChildren(SetProps(MakeElement("Button"), {
-		Size = UDim2.new(0, 74, 0, 24),
-		Position = UDim2.new(0, 168, 0, 13),
+	local SearchBox = AddThemeObject(Create("TextBox", {
+		Size = UDim2.new(1, -20, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		PlaceholderText = "Search...",
+		PlaceholderColor3 = Color3.fromRGB(120, 120, 126),
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		Name = "Input"
+	}), "Text")
+
+	local SearchFrame = SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255,255,255), 0, 7), {
+		Size = UDim2.new(0, 250, 0, 26),
+		Position = UDim2.new(0, 168, 0, 12),
 		BackgroundColor3 = Library.Themes[Library.SelectedTheme].Control,
-		BackgroundTransparency = 0.4,
-		Visible = WindowConfig.Tag and true or false,
-		Name = "Tag"
+		BackgroundTransparency = 0.35,
+		Visible = false,
+		Name = "SearchFrame"
 	}), {
-		MakeElement("Corner", 0, 6),
-		AddThemeObject(SetProps(MakeElement("Label", tostring(WindowConfig.Tag or ""), 12), {
-			Size = UDim2.new(1,0,1,0),
-			Font = Enum.Font.GothamSemibold,
-			TextXAlignment = Enum.TextXAlignment.Center,
-			Name = "Content"
-		}), "Text")
+		AddThemeObject(MakeElement("Stroke"), "Stroke"),
+		SearchBox
 	})
 
 	local WindowTopBarLine = AddThemeObject(SetProps(MakeElement("Frame"), {
@@ -666,7 +692,7 @@ function Library:MakeWindow(WindowConfig)
 		SetChildren(SetProps(MakeElement("TFrame"), {Size = UDim2.new(1,0,0,50), Name = "TopBar"}), {
 			WindowIcon,
 			WindowName,
-			TagButton,
+			SearchFrame,
 			WindowTopBarLine,
 			SearchBtn,
 			MinimizeBtn,
@@ -695,47 +721,93 @@ function Library:MakeWindow(WindowConfig)
 		MakeElement("Corner", 1)
 	})
 
-	AddConnection(CloseBtn.MouseButton1Up, function()
+	local function HideUI()
 		MainWindow.Visible = false
 		if UserInputService.TouchEnabled then MobileReopenButton.Visible = true end
 		UIHidden = true
 		Library:MakeNotification({
 			Name = "Interface Hidden",
-			Content = UserInputService.TouchEnabled and "Tap the button or Left Control to reopen the interface" or "Press Left Control to reopen the interface",
+			Content = UserInputService.TouchEnabled and ("Tap the button or press " .. ToggleKeyName .. " to reopen the interface") or ("Press " .. ToggleKeyName .. " to reopen the interface"),
 			Time = 5
 		})
+	end
+
+	AddConnection(CloseBtn.MouseButton1Up, function()
+		HideUI()
 		WindowConfig.CloseCallback()
 	end)
 
 	AddConnection(HideBtn.MouseButton1Up, function()
-		MainWindow.Visible = false
-		if UserInputService.TouchEnabled then MobileReopenButton.Visible = true end
-		UIHidden = true
-		Library:MakeNotification({
-			Name = "Interface Hidden",
-			Content = UserInputService.TouchEnabled and "Tap the button or Left Control to reopen the interface" or "Press Left Control to reopen the interface",
-			Time = 5
-		})
+		HideUI()
+	end)
+
+	local function ResetSearch()
+		for _, Entry in ipairs(Library.SearchRegistry) do
+			if Entry.Frame and Entry.Frame.Parent then
+				Entry.Frame.Visible = true
+				if Entry.Section then Entry.Section.Visible = true end
+			end
+		end
+	end
+
+	local function DoSearch(Query)
+		Query = string.lower(Query or "")
+		if Query == "" then ResetSearch() return end
+		local Sections, FirstHit = {}, nil
+		for _, Entry in ipairs(Library.SearchRegistry) do
+			if Entry.Frame and Entry.Frame.Parent then
+				local Match = string.find(string.lower(GetElementName(Entry.Frame)), Query, 1, true) ~= nil
+				Entry.Frame.Visible = Match
+				if Match then
+					FirstHit = FirstHit or Entry
+					if Entry.Section then Sections[Entry.Section] = true end
+				end
+			end
+		end
+		for _, Entry in ipairs(Library.SearchRegistry) do
+			if Entry.Section and Entry.Section.Parent then
+				Entry.Section.Visible = Sections[Entry.Section] == true
+			end
+		end
+		if FirstHit and FirstHit.Container and not FirstHit.Container.Visible and FirstHit.Activate then
+			FirstHit.Activate()
+		end
+	end
+
+	AddConnection(SearchBox:GetPropertyChangedSignal("Text"), function()
+		DoSearch(SearchBox.Text)
 	end)
 
 	AddConnection(SearchBtn.MouseButton1Up, function()
-		WindowConfig.SearchCallback()
+		SearchFrame.Visible = not SearchFrame.Visible
+		if SearchFrame.Visible then
+			SearchBox:CaptureFocus()
+		else
+			SearchBox.Text = ""
+			SearchBox:ReleaseFocus()
+			ResetSearch()
+		end
+		WindowConfig.SearchCallback(SearchFrame.Visible)
 	end)
 
-	AddConnection(TagButton.MouseButton1Click, function()
-		WindowConfig.TagCallback()
-	end)
+	local function SetUIVisible(State)
+		UIHidden = not State
+		MainWindow.Visible = State
+		if UserInputService.TouchEnabled then MobileReopenButton.Visible = not State end
+	end
 
-	AddConnection(UserInputService.InputBegan, function(Input)
-		if Input.KeyCode == Enum.KeyCode.LeftControl and UIHidden == true then
-			MainWindow.Visible = true
-			MobileReopenButton.Visible = false
+	AddConnection(UserInputService.InputBegan, function(Input, Processed)
+		if Processed then return end
+		if UserInputService:GetFocusedTextBox() then return end
+		if Input.KeyCode == WindowConfig.ToggleKey then
+			SetUIVisible(UIHidden)
 		end
 	end)
 
 	AddConnection(MobileReopenButton.Activated, function()
 		MainWindow.Visible = true
 		MobileReopenButton.Visible = false
+		UIHidden = false
 	end)
 
 	AddConnection(MinimizeBtn.MouseButton1Up, function()
@@ -750,7 +822,7 @@ function Library:MakeWindow(WindowConfig)
 			MainWindow.ClipsDescendants = true
 			WindowTopBarLine.Visible = false
 			MinimizeBtn.Ico.Rotation = 0
-			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, WindowName.TextBounds.X + 140, 0, 50)}):Play()
+			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, math.max(WindowName.TextBounds.X + 210, 320), 0, 50)}):Play()
 			wait(0.1)
 			WindowStuff.Visible = false
 		end
@@ -963,8 +1035,7 @@ function Library:MakeWindow(WindowConfig)
 			TabItemContainer.Visible = true
 		end
 
-		AddConnection(TabFrame.MouseButton1Click, function()
-			local sound = Instance.new("Sound") sound.SoundId = "rbxassetid://6895079853" sound.Volume = 0.5 sound.Parent = game:GetService("SoundService") sound:Play() game:GetService("Debris"):AddItem(sound, 1)
+		local function ActivateTab()
 			for _, Tab in next, TabHolder:GetChildren() do
 				if Tab:IsA("TextButton") and Tab:FindFirstChild("Ico") and Tab:FindFirstChild("Title") then
 					Tab.Title.Font = Enum.Font.GothamSemibold
@@ -979,6 +1050,11 @@ function Library:MakeWindow(WindowConfig)
 			TweenService:Create(TabFrame.Title, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {TextTransparency  = 0, TextColor3  = ACCENT_TEXT}):Play()
 			TabFrame.Title.Font = Enum.Font.GothamBold
 			TabItemContainer.Visible = true
+		end
+
+		AddConnection(TabFrame.MouseButton1Click, function()
+			local sound = Instance.new("Sound") sound.SoundId = "rbxassetid://6895079853" sound.Volume = 0.5 sound.Parent = game:GetService("SoundService") sound:Play() game:GetService("Debris"):AddItem(sound, 1)
+			ActivateTab()
 		end)
 
 		local function GetElements(ItemParent, InPanel)
@@ -998,7 +1074,7 @@ function Library:MakeWindow(WindowConfig)
 					}), "Text"),
 					AddThemeObject(MakeElement("Stroke"), "Stroke")
 				}), "Second")
-				StyleElement(LabelFrame, InPanel)
+				SetupElement(LabelFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 				local LabelFunction = {}
 				function LabelFunction:Set(ToChange)
 					if LabelFrame:FindFirstChild("Content") then LabelFrame.Content.Text = ToChange end
@@ -1029,7 +1105,7 @@ function Library:MakeWindow(WindowConfig)
 					}), "TextDark"),
 					AddThemeObject(MakeElement("Stroke"), "Stroke")
 				}), "Second")
-				StyleElement(ParagraphFrame, InPanel)
+				SetupElement(ParagraphFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 				AddConnection(ParagraphFrame.Content:GetPropertyChangedSignal("Text"), function()
 					ParagraphFrame.Content.Size = UDim2.new(1,-28,0,ParagraphFrame.Content.TextBounds.Y)
 					ParagraphFrame.Size = UDim2.new(1,0,0,ParagraphFrame.Content.TextBounds.Y + 46)
@@ -1064,7 +1140,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					Click
 				}), "Second")
-				StyleElement(ButtonFrame, InPanel)
+				SetupElement(ButtonFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 				AddConnection(Click.MouseEnter,      function() TweenService:Create(ButtonFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(Library.Themes[Library.SelectedTheme].Second.R*255+3, Library.Themes[Library.SelectedTheme].Second.G*255+3, Library.Themes[Library.SelectedTheme].Second.B*255+3)}):Play() end)
 				AddConnection(Click.MouseLeave,      function() TweenService:Create(ButtonFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Library.Themes[Library.SelectedTheme].Second}):Play() end)
 				AddConnection(Click.MouseButton1Up,  function()
@@ -1117,7 +1193,7 @@ function Library:MakeWindow(WindowConfig)
 					ToggleBox,
 					Click
 				}), "Second")
-				StyleElement(ToggleFrame, InPanel)
+				SetupElement(ToggleFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				function Toggle:Set(Value)
 					Toggle.Value = Value
@@ -1201,7 +1277,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					SliderBar
 				}), "Second")
-				StyleElement(SliderFrame, InPanel)
+				SetupElement(SliderFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				SliderBar.InputBegan:Connect(function(Input)
 					if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
@@ -1276,7 +1352,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					MakeElement("Corner")
 				}), "Second")
-				StyleElement(DropdownFrame, InPanel)
+				SetupElement(DropdownFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				AddConnection(DropdownList:GetPropertyChangedSignal("AbsoluteContentSize"), function()
 					DropdownContainer.CanvasSize = UDim2.new(0,0,0,DropdownList.AbsoluteContentSize.Y)
@@ -1352,6 +1428,7 @@ function Library:MakeWindow(WindowConfig)
 			end
 
 			function ElementFunction:AddBind(BindConfig)
+				BindConfig = BindConfig or {}
 				BindConfig.Name     = BindConfig.Name     or "Bind"
 				BindConfig.Default  = BindConfig.Default  or Enum.KeyCode.Unknown
 				BindConfig.Hold     = BindConfig.Hold     or false
@@ -1392,7 +1469,7 @@ function Library:MakeWindow(WindowConfig)
 					BindBox,
 					Click
 				}), "Second")
-				StyleElement(BindFrame, InPanel)
+				SetupElement(BindFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				AddConnection(BindBox.Value:GetPropertyChangedSignal("Text"), function()
 					TweenService:Create(BindBox, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, BindBox.Value.TextBounds.X + 16, 0, 24)}):Play()
@@ -1491,7 +1568,7 @@ function Library:MakeWindow(WindowConfig)
 					TextContainer,
 					Click
 				}), "Second")
-				StyleElement(TextboxFrame, InPanel)
+				SetupElement(TextboxFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				AddConnection(TextboxActual:GetPropertyChangedSignal("Text"), function()
 					TweenService:Create(TextContainer, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, TextboxActual.TextBounds.X+16, 0, 24)}):Play()
@@ -1519,6 +1596,7 @@ function Library:MakeWindow(WindowConfig)
 				ColorpickerConfig.Save     = ColorpickerConfig.Save     or false
 
 				local ColorH, ColorS, ColorV = 1, 1, 1
+				local ColorInput, HueInput
 				local Colorpicker = {Value = ColorpickerConfig.Default, Toggled = false, Type = "Colorpicker", Save = ColorpickerConfig.Save}
 
 				local ColorSelection = Create("ImageLabel", {
@@ -1585,7 +1663,7 @@ function Library:MakeWindow(WindowConfig)
 					ColorpickerContainer,
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 				}), "Second")
-				StyleElement(ColorpickerFrame, InPanel)
+				SetupElement(ColorpickerFrame, InPanel, TabItemContainer, ActivateTab, ItemParent)
 
 				AddConnection(Click.MouseButton1Click, function()
 					local sound = Instance.new("Sound") sound.SoundId = "rbxassetid://6895079853" sound.Volume = 0.5 sound.Parent = game:GetService("SoundService") sound:Play() game:GetService("Debris"):AddItem(sound, 1)
@@ -1600,7 +1678,6 @@ function Library:MakeWindow(WindowConfig)
 					ColorpickerBox.BackgroundColor3 = Color3.fromHSV(ColorH, ColorS, ColorV)
 					Color.BackgroundColor3 = Color3.fromHSV(ColorH, 1, 1)
 					Colorpicker:Set(ColorpickerBox.BackgroundColor3)
-					ColorpickerConfig.Callback(ColorpickerBox.BackgroundColor3)
 					SaveCfg(game.GameId)
 				end
 
@@ -1659,6 +1736,7 @@ function Library:MakeWindow(WindowConfig)
 		local ElementFunction = {}
 
 		function ElementFunction:AddSection(SectionConfig)
+			SectionConfig = SectionConfig or {}
 			SectionConfig.Name = SectionConfig.Name or "Section"
 			local SectionFrame = SetChildren(SetProps(MakeElement("TFrame"), {
 				Size = UDim2.new(1,0,0,26),
@@ -1965,12 +2043,12 @@ local Configs_HUB = {
 
 local function Create2(instance, parent, props)
 	local new = Instance.new(instance, parent)
-	if props then table.foreach(props, function(prop, value) new[prop] = value end) end
+	if props then for prop, value in pairs(props) do new[prop] = value end end
 	return new
 end
 
 local function SetProps2(instance, props)
-	if instance and props then table.foreach(props, function(prop, value) instance[prop] = value end) end
+	if instance and props then for prop, value in pairs(props) do instance[prop] = value end end
 	return instance
 end
 
@@ -2075,6 +2153,7 @@ function Library:MakeNotifi(Configs)
 end
 
 function Library:Destroy()
+	Library.SearchRegistry = {}
 	Container:Destroy()
 end
 
