@@ -13,14 +13,14 @@ local Library = {
 	SearchRegistry = {},
 	Themes = {
 		Default = {
-			Main = Color3.fromRGB(17, 17, 21),
-			Second = Color3.fromRGB(31, 31, 38),
-			Sidebar = Color3.fromRGB(21, 21, 26),
-			Control = Color3.fromRGB(46, 46, 56),
-			Stroke = Color3.fromRGB(44, 44, 54),
-			Divider = Color3.fromRGB(38, 38, 46),
-			Text = Color3.fromRGB(236, 236, 242),
-			TextDark = Color3.fromRGB(138, 138, 150),
+			Main = Color3.fromRGB(26, 26, 28),     -- Fenster / Content
+			Second = Color3.fromRGB(28, 29, 30),   -- Element-Panel
+			Sidebar = Color3.fromRGB(30, 30, 32),  -- linke Leiste
+			Control = Color3.fromRGB(44, 44, 48),  -- Keybind / Textbox / Farbfeld
+			Stroke = Color3.fromRGB(38, 38, 42),
+			Divider = Color3.fromRGB(38, 38, 42),
+			Text = Color3.fromRGB(220, 220, 224),
+			TextDark = Color3.fromRGB(130, 130, 136),
 			MainTransparency = 0.1,
 			SecondTransparency = 0.15,
 			FrameTransparency = 0.2
@@ -35,18 +35,20 @@ local Library = {
 -- ╚══════════════════════════════════════════╝
 -- 0 = deckend/grau, 1 = komplett unsichtbar
 Library.Transparency = {
-	Window  = 0.2, -- Fenster + Content-Bereich (0.75 = stark durchsichtig)
-	Sidebar = 0,   -- linke Tab-Leiste
-	Second  = 0,   -- Toggles, Buttons, Slider, Dropdowns ...
-	Control = 0,   -- Keybind-Feld, Textbox-Feld, Farb-Vorschau
+	Window  = 0.25, -- Fenster + Content-Bereich (durchscheinend wie im Bild)
+	Sidebar = 0.12, -- linke Tab-Leiste
+	Second  = 0,    -- Element-Panel (deckend)
+	Control = 0.45, -- Keybind-Feld, Textbox-Feld, Farb-Vorschau
 }
 
 -- ╔══════════════════════════════════════════╗
 -- ║        AKZENTFARBE (Lila / Purple)       ║
 -- ╚══════════════════════════════════════════╝
-Library.Accent     = Color3.fromRGB(139, 92, 246)  -- Toggles, aktiver Tab, Slider
-Library.AccentSoft = Color3.fromRGB(167, 139, 250) -- Gruppen-Überschriften
+Library.Accent     = Color3.fromRGB(121, 113, 192) -- Toggles, Slider (aus dem Screenshot)
+Library.AccentText = Color3.fromRGB(150, 142, 230) -- aktiver Tab
+Library.AccentSoft = Color3.fromRGB(128, 121, 190) -- Gruppen-Überschriften
 local ACCENT       = Library.Accent
+local ACCENT_TEXT  = Library.AccentText
 local ACCENT_SOFT  = Library.AccentSoft
 
 local function PackColor(Color)
@@ -265,6 +267,36 @@ local function AddThemeObject(Object, Type)
 	return Object
 end
 
+-- Element in ein Panel einfuegen: transparent + 1px Trennlinie unten
+local function StyleElement(Frame, InPanel)
+	if not InPanel then return Frame end
+	Frame.BackgroundTransparency = 1
+	Frame.Position = UDim2.new(0, 0, 0, 0)
+	Frame.Size = UDim2.new(1, 0, 0, Frame.Size.Y.Offset)
+	local Corner = Frame:FindFirstChildOfClass("UICorner")
+	if Corner then Corner.CornerRadius = UDim.new(0, 0) end
+	local Stroke = Frame:FindFirstChildOfClass("UIStroke")
+	if Stroke then Stroke.Transparency = 1 end
+	AddThemeObject(Create("Frame", {
+		Name = "RowLine",
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1),
+		BorderSizePixel = 0,
+		ZIndex = 2,
+		Parent = Frame
+	}), "Divider")
+	local Btn = Frame:FindFirstChildOfClass("TextButton")
+	if Btn then
+		AddConnection(Btn.MouseEnter, function()
+			TweenService:Create(Frame, TweenInfo.new(0.15), {BackgroundTransparency = 0.93}):Play()
+		end)
+		AddConnection(Btn.MouseLeave, function()
+			TweenService:Create(Frame, TweenInfo.new(0.15), {BackgroundTransparency = 1}):Play()
+		end)
+	end
+	return Frame
+end
+
 local function SetTheme()
 	for Name, Type in pairs(Library.ThemeObjects) do
 		for _, Object in pairs(Type) do
@@ -450,6 +482,9 @@ function Library:MakeWindow(WindowConfig)
 	WindowConfig.ShowIcon        = WindowConfig.ShowIcon        or false
 	WindowConfig.Icon            = WindowConfig.Icon            or "rbxassetid://8834748103"
 	WindowConfig.IntroIcon       = WindowConfig.IntroIcon       or "rbxassetid://8834748103"
+	if WindowConfig.Tag == nil then WindowConfig.Tag = "General" end
+	WindowConfig.TagCallback     = WindowConfig.TagCallback     or function() end
+	WindowConfig.SearchCallback  = WindowConfig.SearchCallback  or function() end
 
 	Library.Folder  = WindowConfig.ConfigFolder
 	Library.SaveCfg = WindowConfig.SaveConfig
@@ -472,11 +507,54 @@ function Library:MakeWindow(WindowConfig)
 		TabHolder.CanvasSize = UDim2.new(0, 0, 0, TabHolder.UIListLayout.AbsoluteContentSize.Y + 16)
 	end)
 
-	local CloseBtn = SetChildren(SetProps(MakeElement("Button"), {
-		Size = UDim2.new(0, 28, 0, 28),
-		Position = UDim2.new(1, -40, 0, 11),
-		BackgroundTransparency = 1
-	}), {
+	local function TopIcon(xOffset)
+		return SetProps(MakeElement("Button"), {
+			Size = UDim2.new(0, 28, 0, 28),
+			Position = UDim2.new(1, xOffset, 0, 11),
+			BackgroundTransparency = 1
+		})
+	end
+
+	-- Lupe (als Vektor gezeichnet, braucht kein Asset)
+	local SearchBtn = SetChildren(TopIcon(-133), {
+		SetChildren(SetProps(MakeElement("TFrame"), {
+			Size = UDim2.new(0, 12, 0, 12),
+			Position = UDim2.new(0, 6, 0, 6),
+			Name = "Glass"
+		}), {
+			MakeElement("Corner", 1),
+			AddThemeObject(SetProps(MakeElement("Stroke"), {Thickness = 1.6}), "TextDark")
+		}),
+		AddThemeObject(SetProps(MakeElement("Frame"), {
+			Size = UDim2.new(0, 7, 0, 1.6),
+			Position = UDim2.new(0, 16, 0, 18),
+			Rotation = 45,
+			Name = "Handle"
+		}), "TextDark")
+	})
+
+	-- Chevron: Fenster ein-/ausklappen
+	local MinimizeBtn = SetChildren(TopIcon(-101), {
+		AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072706796"), {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			Size = UDim2.new(0, 18, 0, 18),
+			Rotation = 180,
+			Name = "Ico"
+		}), "TextDark")
+	})
+
+	-- Minus: UI verstecken
+	local HideBtn = SetChildren(TopIcon(-69), {
+		AddThemeObject(SetProps(MakeElement("Frame"), {
+			Size = UDim2.new(0, 13, 0, 1.6),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			Name = "Ico"
+		}), "TextDark")
+	})
+
+	local CloseBtn = SetChildren(TopIcon(-37), {
 		AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072725342"), {
 			AnchorPoint = Vector2.new(0.5, 0.5),
 			Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -485,31 +563,16 @@ function Library:MakeWindow(WindowConfig)
 		}), "TextDark")
 	})
 
-	local MinimizeBtn = SetChildren(SetProps(MakeElement("Button"), {
-		Size = UDim2.new(0, 28, 0, 28),
-		Position = UDim2.new(1, -74, 0, 11),
-		BackgroundTransparency = 1
-	}), {
-		AddThemeObject(SetProps(MakeElement("Image", "rbxassetid://7072719338"), {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, 0, 0.5, 0),
-			Size = UDim2.new(0, 17, 0, 17),
-			Name = "Ico"
-		}), "TextDark")
-	})
-
-	AddConnection(CloseBtn.MouseEnter, function()
-		TweenService:Create(CloseBtn.Ico, TweenInfo.new(0.15), {ImageColor3 = Color3.fromRGB(255, 95, 95)}):Play()
-	end)
-	AddConnection(CloseBtn.MouseLeave, function()
-		TweenService:Create(CloseBtn.Ico, TweenInfo.new(0.15), {ImageColor3 = Library.Themes[Library.SelectedTheme].TextDark}):Play()
-	end)
-	AddConnection(MinimizeBtn.MouseEnter, function()
-		TweenService:Create(MinimizeBtn.Ico, TweenInfo.new(0.15), {ImageColor3 = Library.Themes[Library.SelectedTheme].Text}):Play()
-	end)
-	AddConnection(MinimizeBtn.MouseLeave, function()
-		TweenService:Create(MinimizeBtn.Ico, TweenInfo.new(0.15), {ImageColor3 = Library.Themes[Library.SelectedTheme].TextDark}):Play()
-	end)
+	for _, Btn in pairs({SearchBtn, MinimizeBtn, HideBtn, CloseBtn}) do
+		Create("UICorner", {CornerRadius = UDim.new(0, 7), Parent = Btn})
+		Btn.BackgroundColor3 = Library.Themes[Library.SelectedTheme].Control
+		AddConnection(Btn.MouseEnter, function()
+			TweenService:Create(Btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.55}):Play()
+		end)
+		AddConnection(Btn.MouseLeave, function()
+			TweenService:Create(Btn, TweenInfo.new(0.15), {BackgroundTransparency = 1}):Play()
+		end)
+	end
 
 	local DragPoint = SetProps(MakeElement("TFrame"), {Size = UDim2.new(1, 0, 0, 50)})
 
@@ -571,6 +634,23 @@ function Library:MakeWindow(WindowConfig)
 		TextYAlignment = Enum.TextYAlignment.Center
 	}), "Text")
 
+	local TagButton = SetChildren(SetProps(MakeElement("Button"), {
+		Size = UDim2.new(0, 74, 0, 24),
+		Position = UDim2.new(0, 168, 0, 13),
+		BackgroundColor3 = Library.Themes[Library.SelectedTheme].Control,
+		BackgroundTransparency = 0.4,
+		Visible = WindowConfig.Tag and true or false,
+		Name = "Tag"
+	}), {
+		MakeElement("Corner", 0, 6),
+		AddThemeObject(SetProps(MakeElement("Label", tostring(WindowConfig.Tag or ""), 12), {
+			Size = UDim2.new(1,0,1,0),
+			Font = Enum.Font.GothamSemibold,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			Name = "Content"
+		}), "Text")
+	})
+
 	local WindowTopBarLine = AddThemeObject(SetProps(MakeElement("Frame"), {
 		Size = UDim2.new(1,0,0,1),
 		Position = UDim2.new(0,0,1,-1)
@@ -578,16 +658,19 @@ function Library:MakeWindow(WindowConfig)
 
 	local MainWindow = AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255,255,255), 0, 10), {
 		Parent = Container,
-		Position = UDim2.new(0.5,-307,0.5,-172),
-		Size = UDim2.new(0,615,0,344),
+		Position = UDim2.new(0.5,-320,0.5,-169),
+		Size = UDim2.new(0,640,0,338),
 		ClipsDescendants = true,
 		BackgroundTransparency = Library.Transparency.Window
 	}), {
 		SetChildren(SetProps(MakeElement("TFrame"), {Size = UDim2.new(1,0,0,50), Name = "TopBar"}), {
 			WindowIcon,
 			WindowName,
+			TagButton,
 			WindowTopBarLine,
+			SearchBtn,
 			MinimizeBtn,
+			HideBtn,
 			CloseBtn
 		}),
 		DragPoint,
@@ -624,6 +707,25 @@ function Library:MakeWindow(WindowConfig)
 		WindowConfig.CloseCallback()
 	end)
 
+	AddConnection(HideBtn.MouseButton1Up, function()
+		MainWindow.Visible = false
+		if UserInputService.TouchEnabled then MobileReopenButton.Visible = true end
+		UIHidden = true
+		Library:MakeNotification({
+			Name = "Interface Hidden",
+			Content = UserInputService.TouchEnabled and "Tap the button or Left Control to reopen the interface" or "Press Left Control to reopen the interface",
+			Time = 5
+		})
+	end)
+
+	AddConnection(SearchBtn.MouseButton1Up, function()
+		WindowConfig.SearchCallback()
+	end)
+
+	AddConnection(TagButton.MouseButton1Click, function()
+		WindowConfig.TagCallback()
+	end)
+
 	AddConnection(UserInputService.InputBegan, function(Input)
 		if Input.KeyCode == Enum.KeyCode.LeftControl and UIHidden == true then
 			MainWindow.Visible = true
@@ -638,8 +740,8 @@ function Library:MakeWindow(WindowConfig)
 
 	AddConnection(MinimizeBtn.MouseButton1Up, function()
 		if Minimized then
-			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0,615,0,344)}):Play()
-			MinimizeBtn.Ico.Image = "rbxassetid://7072719338"
+			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0,640,0,338)}):Play()
+			MinimizeBtn.Ico.Rotation = 180
 			wait(.02)
 			MainWindow.ClipsDescendants = false
 			WindowStuff.Visible = true
@@ -647,7 +749,7 @@ function Library:MakeWindow(WindowConfig)
 		else
 			MainWindow.ClipsDescendants = true
 			WindowTopBarLine.Visible = false
-			MinimizeBtn.Ico.Image = "rbxassetid://7072720870"
+			MinimizeBtn.Ico.Rotation = 0
 			TweenService:Create(MainWindow, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, WindowName.TextBounds.X + 140, 0, 50)}):Play()
 			wait(0.1)
 			WindowStuff.Visible = false
@@ -844,7 +946,7 @@ function Library:MakeWindow(WindowConfig)
 			Name = "ItemContainer"
 		}), {
 			MakeElement("List", 0, 8),
-			MakeElement("Padding", 14, 12, 12, 12)
+			MakeElement("Padding", 14, 8, 14, 10)
 		}), "Divider")
 
 		AddConnection(TabItemContainer.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
@@ -856,8 +958,8 @@ function Library:MakeWindow(WindowConfig)
 			TabFrame.Ico.ImageTransparency = 0
 			TabFrame.Title.TextTransparency = 0
 			TabFrame.Title.Font = Enum.Font.GothamBold
-			TabFrame.Ico.ImageColor3 = ACCENT
-			TabFrame.Title.TextColor3 = ACCENT
+			TabFrame.Ico.ImageColor3 = ACCENT_TEXT
+			TabFrame.Title.TextColor3 = ACCENT_TEXT
 			TabItemContainer.Visible = true
 		end
 
@@ -873,13 +975,13 @@ function Library:MakeWindow(WindowConfig)
 			for _, ItemContainer in next, MainWindow:GetChildren() do
 				if ItemContainer.Name == "ItemContainer" then ItemContainer.Visible = false end
 			end
-			TweenService:Create(TabFrame.Ico,   TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {ImageTransparency = 0, ImageColor3 = ACCENT}):Play()
-			TweenService:Create(TabFrame.Title, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {TextTransparency  = 0, TextColor3  = ACCENT}):Play()
+			TweenService:Create(TabFrame.Ico,   TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {ImageTransparency = 0, ImageColor3 = ACCENT_TEXT}):Play()
+			TweenService:Create(TabFrame.Title, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {TextTransparency  = 0, TextColor3  = ACCENT_TEXT}):Play()
 			TabFrame.Title.Font = Enum.Font.GothamBold
 			TabItemContainer.Visible = true
 		end)
 
-		local function GetElements(ItemParent)
+		local function GetElements(ItemParent, InPanel)
 			local ElementFunction = {}
 
 			function ElementFunction:AddLabel(Text)
@@ -896,6 +998,7 @@ function Library:MakeWindow(WindowConfig)
 					}), "Text"),
 					AddThemeObject(MakeElement("Stroke"), "Stroke")
 				}), "Second")
+				StyleElement(LabelFrame, InPanel)
 				local LabelFunction = {}
 				function LabelFunction:Set(ToChange)
 					if LabelFrame:FindFirstChild("Content") then LabelFrame.Content.Text = ToChange end
@@ -926,6 +1029,7 @@ function Library:MakeWindow(WindowConfig)
 					}), "TextDark"),
 					AddThemeObject(MakeElement("Stroke"), "Stroke")
 				}), "Second")
+				StyleElement(ParagraphFrame, InPanel)
 				AddConnection(ParagraphFrame.Content:GetPropertyChangedSignal("Text"), function()
 					ParagraphFrame.Content.Size = UDim2.new(1,-28,0,ParagraphFrame.Content.TextBounds.Y)
 					ParagraphFrame.Size = UDim2.new(1,0,0,ParagraphFrame.Content.TextBounds.Y + 46)
@@ -960,6 +1064,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					Click
 				}), "Second")
+				StyleElement(ButtonFrame, InPanel)
 				AddConnection(Click.MouseEnter,      function() TweenService:Create(ButtonFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Color3.fromRGB(Library.Themes[Library.SelectedTheme].Second.R*255+3, Library.Themes[Library.SelectedTheme].Second.G*255+3, Library.Themes[Library.SelectedTheme].Second.B*255+3)}):Play() end)
 				AddConnection(Click.MouseLeave,      function() TweenService:Create(ButtonFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {BackgroundColor3 = Library.Themes[Library.SelectedTheme].Second}):Play() end)
 				AddConnection(Click.MouseButton1Up,  function()
@@ -1012,6 +1117,7 @@ function Library:MakeWindow(WindowConfig)
 					ToggleBox,
 					Click
 				}), "Second")
+				StyleElement(ToggleFrame, InPanel)
 
 				function Toggle:Set(Value)
 					Toggle.Value = Value
@@ -1095,6 +1201,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					SliderBar
 				}), "Second")
+				StyleElement(SliderFrame, InPanel)
 
 				SliderBar.InputBegan:Connect(function(Input)
 					if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
@@ -1169,6 +1276,7 @@ function Library:MakeWindow(WindowConfig)
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 					MakeElement("Corner")
 				}), "Second")
+				StyleElement(DropdownFrame, InPanel)
 
 				AddConnection(DropdownList:GetPropertyChangedSignal("AbsoluteContentSize"), function()
 					DropdownContainer.CanvasSize = UDim2.new(0,0,0,DropdownList.AbsoluteContentSize.Y)
@@ -1284,6 +1392,7 @@ function Library:MakeWindow(WindowConfig)
 					BindBox,
 					Click
 				}), "Second")
+				StyleElement(BindFrame, InPanel)
 
 				AddConnection(BindBox.Value:GetPropertyChangedSignal("Text"), function()
 					TweenService:Create(BindBox, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, BindBox.Value.TextBounds.X + 16, 0, 24)}):Play()
@@ -1382,6 +1491,7 @@ function Library:MakeWindow(WindowConfig)
 					TextContainer,
 					Click
 				}), "Second")
+				StyleElement(TextboxFrame, InPanel)
 
 				AddConnection(TextboxActual:GetPropertyChangedSignal("Text"), function()
 					TweenService:Create(TextContainer, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.new(0, TextboxActual.TextBounds.X+16, 0, 24)}):Play()
@@ -1475,6 +1585,7 @@ function Library:MakeWindow(WindowConfig)
 					ColorpickerContainer,
 					AddThemeObject(MakeElement("Stroke"), "Stroke"),
 				}), "Second")
+				StyleElement(ColorpickerFrame, InPanel)
 
 				AddConnection(Click.MouseButton1Click, function()
 					local sound = Instance.new("Sound") sound.SoundId = "rbxassetid://6895079853" sound.Volume = 0.5 sound.Parent = game:GetService("SoundService") sound:Play() game:GetService("Debris"):AddItem(sound, 1)
@@ -1553,24 +1664,28 @@ function Library:MakeWindow(WindowConfig)
 				Size = UDim2.new(1,0,0,26),
 				Parent = TabItemContainer
 			}), {
-				AddThemeObject(SetProps(MakeElement("Label", SectionConfig.Name, 13), {
-					Size = UDim2.new(1,-12,0,16),
-					Position = UDim2.new(0,4,0,4),
+				AddThemeObject(SetProps(MakeElement("Label", SectionConfig.Name, 12), {
+					Size = UDim2.new(1,-12,0,14),
+					Position = UDim2.new(0,6,0,2),
 					Font = Enum.Font.GothamSemibold
 				}), "TextDark"),
-				SetChildren(SetProps(MakeElement("TFrame"), {
+				AddThemeObject(SetChildren(SetProps(MakeElement("RoundFrame", Color3.fromRGB(255,255,255), 0, 8), {
 					AnchorPoint = Vector2.new(0,0),
 					Size = UDim2.new(1,0,1,-24),
-					Position = UDim2.new(0,0,0,23),
+					Position = UDim2.new(0,0,0,22),
+					ClipsDescendants = true,
 					Name = "Holder"
-				}), {MakeElement("List", 0, 8)}),
+				}), {
+					MakeElement("List", 0, 0),
+					AddThemeObject(MakeElement("Stroke"), "Stroke")
+				}), "Second"),
 			})
 			AddConnection(SectionFrame.Holder.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
 				SectionFrame.Size        = UDim2.new(1, 0, 0, SectionFrame.Holder.UIListLayout.AbsoluteContentSize.Y + 31)
 				SectionFrame.Holder.Size = UDim2.new(1, 0, 0, SectionFrame.Holder.UIListLayout.AbsoluteContentSize.Y)
 			end)
 			local SectionFunction = {}
-			for i, v in next, GetElements(SectionFrame.Holder) do SectionFunction[i] = v end
+			for i, v in next, GetElements(SectionFrame.Holder, true) do SectionFunction[i] = v end
 			return SectionFunction
 		end
 
